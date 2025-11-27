@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Hand-osu! (On-Device)</title>
+    <title>AI Hand-osu! (With Sliders)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -16,7 +16,7 @@
             background-color: #111;
             overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            touch-action: none; /* 禁止手機預設觸控行為 */
+            touch-action: none;
         }
 
         #container {
@@ -25,29 +25,24 @@
             height: 100vh;
         }
 
-        /* 隱藏原始 Video，我們畫在 Canvas 上 */
-        .input_video {
-            display: none;
-        }
+        .input_video { display: none; }
 
-        /* 遊戲主畫面 */
         .output_canvas {
             position: absolute;
             left: 0;
             top: 0;
             width: 100%;
             height: 100%;
-            transform: scaleX(-1); /* 鏡像顯示 */
+            transform: scaleX(-1); /* 鏡像 */
         }
 
-        /* UI 層 (不鏡像) */
         #ui-layer {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            pointer-events: none; /* 讓點擊穿透 */
+            pointer-events: none;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -66,9 +61,9 @@
         #combo {
             font-size: 40px;
             color: #6cc;
+            transition: transform 0.1s;
         }
 
-        /* 載入畫面與開始按鈕 */
         #loading-screen {
             position: absolute;
             top: 0;
@@ -95,7 +90,7 @@
             color: white;
             cursor: pointer;
             margin-top: 20px;
-            display: none; /* 預設隱藏，模型載入後顯示 */
+            display: none;
             box-shadow: 0 0 15px #ff66aa;
         }
 
@@ -109,12 +104,8 @@
             margin-bottom: 20px;
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* 手勢提示 */
         #gesture-hint {
             position: absolute;
             bottom: 20px;
@@ -123,6 +114,9 @@
             color: rgba(255,255,255,0.7);
             font-size: 14px;
             text-align: center;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 10px;
         }
     </style>
 </head>
@@ -137,7 +131,7 @@
                 Score: <span id="score-val">0</span><br>
                 <span id="combo">0x</span>
             </div>
-            <div id="gesture-hint">食指移動游標 • 拇指捏合打擊</div>
+            <div id="gesture-hint">食指移動 • 拇指捏合打擊 • 滑條需按住不放</div>
         </div>
 
         <div id="loading-screen">
@@ -149,62 +143,29 @@
     </div>
 
     <script>
-        // --- 1. Service Worker 註冊 (實現離線功能) ---
-        // 我們動態建立一個 SW 檔案內容，快取必要的 CDN 和 Assets
+        // --- Service Worker (離線支援) ---
         const swCode = `
-            const CACHE_NAME = 'ai-osu-cache-v1';
-            const ASSETS = [
-                './',
-                'index.html',
-                'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js',
-                'https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js',
-                'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
-                'https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js',
-                // MediaPipe 依賴的資源 (WASM, TFLite) 通常由其 JS 動態載入
-                // 這裡僅列出主要腳本，瀏覽器的 Cache API 通常會自動處理 fetch 請求
-            ];
-
-            self.addEventListener('install', (e) => {
-                e.waitUntil(
-                    caches.open(CACHE_NAME).then((cache) => {
-                        return cache.addAll(ASSETS);
-                    })
-                );
-            });
-
+            const CACHE_NAME = 'ai-osu-slider-v2';
+            self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['./', 'index.html']))); });
             self.addEventListener('fetch', (e) => {
-                e.respondWith(
-                    caches.match(e.request).then((response) => {
-                        return response || fetch(e.request).then((response) => {
-                            // 動態快取 MediaPipe 下載的模型檔案
-                            if(e.request.url.includes('mediapipe') || e.request.url.includes('gstatic')) {
-                                let responseClone = response.clone();
-                                caches.open(CACHE_NAME).then((cache) => {
-                                    cache.put(e.request, responseClone);
-                                });
-                            }
-                            return response;
-                        });
-                    })
-                );
+                e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request).then((res) => {
+                    if(e.request.url.includes('mediapipe') || e.request.url.includes('gstatic')) {
+                        let clone = res.clone(); caches.open(CACHE_NAME).then((c) => c.put(e.request, clone));
+                    }
+                    return res;
+                })));
             });
         `;
-
-        // 將 SW 代碼轉換為 Blob URL 並註冊
         if ('serviceWorker' in navigator) {
             const blob = new Blob([swCode], {type: 'text/javascript'});
-            const swUrl = URL.createObjectURL(blob);
-            navigator.serviceWorker.register(swUrl)
-                .then(reg => console.log('Service Worker 註冊成功', reg))
-                .catch(err => console.log('Service Worker 註冊失敗', err));
+            navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(console.error);
         }
 
-        // --- 2. 遊戲變數 ---
+        // --- 變數設定 ---
         const videoElement = document.getElementsByClassName('input_video')[0];
         const canvasElement = document.getElementsByClassName('output_canvas')[0];
         const canvasCtx = canvasElement.getContext('2d');
         
-        // UI
         const loadingScreen = document.getElementById('loading-screen');
         const startBtn = document.getElementById('start-btn');
         const statusText = document.getElementById('status-text');
@@ -212,289 +173,330 @@
         const scoreEl = document.getElementById('score-val');
         const comboEl = document.getElementById('combo');
 
-        // 遊戲狀態
         let isGameRunning = false;
         let score = 0;
         let combo = 0;
-        let gameTime = 0;
         let lastFrameTime = 0;
 
-        // 游標
         let cursorX = 0;
         let cursorY = 0;
         let isPinching = false;
         let prevPinch = false;
 
-        // 物件管理 (Hit Objects)
         let hitObjects = [];
-        const AR = 1500; // Approach Rate (ms) - 縮圈時間
-        const CIRCLE_SIZE = 60; // 圈圈半徑
+        const AR = 1500; // Approach Rate
+        const CIRCLE_SIZE = 50; 
         
-        // 音效 (使用 Web Audio API 生成簡單音效，不依賴外部檔案)
+        // --- 音效系統 ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        function playHitSound() {
+        function playSound(type) {
             if(audioCtx.state === 'suspended') audioCtx.resume();
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
-            gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            
+            if (type === 'hit') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            } else if (type === 'slide') {
+                // 滑行時的輕微連續音 (這裡只做短音模擬)
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            }
+
             gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
             osc.connect(gain);
             gain.connect(audioCtx.destination);
             osc.start();
-            osc.stop(audioCtx.currentTime + 0.15);
+            osc.stop(audioCtx.currentTime + 0.1);
         }
 
-        // --- 3. MediaPipe Setup ---
-        const hands = new Hands({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-        }});
-
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 1, // 0: 輕量, 1: 標準 (手機建議 0 或 1)
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-
+        // --- MediaPipe 設定 ---
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onResults);
 
-        // --- 4. 遊戲邏輯 ---
+        // --- 遊戲生成邏輯 ---
 
         function spawnCircle() {
-            // 隨機產生圈圈，但避開邊緣
             const margin = 100;
             const x = margin + Math.random() * (canvasElement.width - margin * 2);
             const y = margin + Math.random() * (canvasElement.height - margin * 2);
-            
             hitObjects.push({
-                x: x,
-                y: y,
+                type: 'circle',
+                x: x, y: y,
                 spawnTime: Date.now(),
-                hitTime: Date.now() + AR, // 預計打擊時間
-                hit: false,
-                miss: false,
-                id: Math.random()
+                hitTime: Date.now() + AR,
+                hit: false, miss: false
             });
         }
 
-        // 主迴圈
+        function spawnSlider() {
+            const margin = 100;
+            const startX = margin + Math.random() * (canvasElement.width - margin * 2);
+            const startY = margin + Math.random() * (canvasElement.height - margin * 2);
+            // 隨機方向與長度
+            const angle = Math.random() * Math.PI * 2;
+            const length = 200 + Math.random() * 200;
+            const endX = startX + Math.cos(angle) * length;
+            const endY = startY + Math.sin(angle) * length;
+
+            // 確保不出界 (簡單 clamp)
+            const clampX = (v) => Math.max(margin, Math.min(v, canvasElement.width - margin));
+            const clampY = (v) => Math.max(margin, Math.min(v, canvasElement.height - margin));
+
+            hitObjects.push({
+                type: 'slider',
+                x: startX, y: startY, // 起點 (Head)
+                endX: clampX(endX), endY: clampY(endY), // 終點 (Tail)
+                spawnTime: Date.now(),
+                hitTime: Date.now() + AR, // 頭部到達時間
+                duration: 1000, // 滑行時間 (ms)
+                endTime: Date.now() + AR + 1000, // 結束時間
+                sliding: false, // 是否正在滑行中
+                hit: false, miss: false
+            });
+        }
+
         function gameLoop() {
             if (!isGameRunning) return;
-
-            // 生成邏輯 (簡單版：每 1 秒產生一個)
-            const now = Date.now();
-            if (Math.random() < 0.03 && hitObjects.length < 5) { 
-                spawnCircle();
+            // 隨機生成物件
+            if (Math.random() < 0.02 && hitObjects.length < 4) {
+                if (Math.random() < 0.4) spawnSlider(); // 40% 機率是滑條
+                else spawnCircle();
             }
-
             requestAnimationFrame(gameLoop);
         }
 
-        // 處理每一幀的影像與 AI 結果
+        // --- 繪圖與判定主核心 ---
+
         function onResults(results) {
-            // 設定 Canvas 尺寸 (隨視窗調整)
             canvasElement.width = videoElement.videoWidth;
             canvasElement.height = videoElement.videoHeight;
-            
-            // 1. 繪製背景 (相機畫面)
+            const now = Date.now();
+
+            // 1. 繪製背景
             canvasCtx.save();
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-            
-            // 加上一層半透明黑色，讓遊戲物件更明顯
-            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
-            // 2. 處理手勢
+            // 2. 更新手勢座標
             let handDetected = false;
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 handDetected = true;
-                const landmarks = results.multiHandLandmarks[0];
+                const lm = results.multiHandLandmarks[0];
+                const indexTip = lm[8];
+                const thumbTip = lm[4];
 
-                // 取得食指指尖 (Index Finger Tip: 8)
-                const indexTip = landmarks[8];
-                // 取得拇指指尖 (Thumb Tip: 4)
-                const thumbTip = landmarks[4];
-
-                // 座標轉換 (0-1 -> pixel)
-                // 注意：因為 CSS scaleX(-1) 鏡像了 Canvas，但 JS 邏輯座標是原始的
-                // 為了讓邏輯與視覺統一，我們在繪製物件時不需要反轉，但在判定時要注意視覺是反的
-                // 簡單作法：視覺反轉，邏輯不反轉。
-                // 這裡 cursorX 直接取 raw data，但在繪製 cursor 時，因為 canvas 已經 flip，所以畫上去會是對的。
                 cursorX = indexTip.x * canvasElement.width;
                 cursorY = indexTip.y * canvasElement.height;
 
-                // 計算 Pinch (拇指與食指距離)
-                // 簡單的歐氏距離
-                const distance = Math.sqrt(
-                    Math.pow((indexTip.x - thumbTip.x), 2) + 
-                    Math.pow((indexTip.y - thumbTip.y), 2)
-                ); // 這裡距離是 normalized (0-1)
-
-                // 判定閾值
-                const pinchThreshold = 0.05; 
-                isPinching = distance < pinchThreshold;
-
-                // 繪製手部骨架 (選用)
-                // drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
+                const dist = Math.sqrt(Math.pow((indexTip.x - thumbTip.x), 2) + Math.pow((indexTip.y - thumbTip.y), 2));
+                isPinching = dist < 0.05;
+            } else {
+                isPinching = false;
             }
 
-            // 3. 繪製與更新遊戲物件
+            // 3. 處理遊戲物件
             if (isGameRunning) {
-                updateAndDrawGameObjects(now = Date.now());
+                updateGameObjects(now);
             }
 
             // 4. 繪製游標
             if (handDetected) {
                 drawCursor();
             }
-
             canvasCtx.restore();
         }
 
-        function updateAndDrawGameObjects(now) {
-            // 清理過期物件
+        function updateGameObjects(now) {
+            // 根據 hitTime 排序繪製 (先出的在下面，這裡其實沒差太多)
+            // 為了視覺正確，我們倒序處理邏輯，但繪製可能需要順序
+            
             for (let i = hitObjects.length - 1; i >= 0; i--) {
                 let obj = hitObjects[i];
-                
-                // Miss 判定
-                if (now > obj.hitTime + 200 && !obj.hit) {
-                    obj.miss = true;
-                    combo = 0;
-                    comboEl.innerText = "0x";
-                    hitObjects.splice(i, 1);
-                    continue;
-                }
 
-                // 計算進度 (0:剛生成, 1:完美重合)
+                // === 繪製邏輯 (Visuals) ===
                 let progress = (now - obj.spawnTime) / AR;
-                if (progress > 1) progress = 1;
+                if (progress > 1 && !obj.sliding) progress = 1;
 
-                // 繪製 Hit Circle
-                canvasCtx.beginPath();
-                canvasCtx.arc(obj.x, obj.y, CIRCLE_SIZE, 0, 2 * Math.PI);
-                canvasCtx.fillStyle = 'rgba(255, 102, 170, 0.8)'; // osu! pink
-                canvasCtx.fill();
-                canvasCtx.lineWidth = 4;
-                canvasCtx.strokeStyle = '#fff';
-                canvasCtx.stroke();
-
-                // 繪製 Approach Circle (縮圈)
-                let approachRadius = CIRCLE_SIZE + (CIRCLE_SIZE * 2 * (1 - progress));
+                // 縮圈大小
+                let approachRadius = CIRCLE_SIZE + (CIRCLE_SIZE * 3 * (1 - progress));
                 if (approachRadius < CIRCLE_SIZE) approachRadius = CIRCLE_SIZE;
 
-                canvasCtx.beginPath();
-                canvasCtx.arc(obj.x, obj.y, approachRadius, 0, 2 * Math.PI);
-                canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                canvasCtx.stroke();
+                if (obj.type === 'slider') {
+                    // 繪製滑條軌道
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(obj.x, obj.y);
+                    canvasCtx.lineTo(obj.endX, obj.endY);
+                    canvasCtx.lineWidth = CIRCLE_SIZE * 1.8;
+                    canvasCtx.lineCap = 'round';
+                    canvasCtx.strokeStyle = 'rgba(100, 100, 100, 0.8)'; // 外框
+                    canvasCtx.stroke();
+                    canvasCtx.lineWidth = CIRCLE_SIZE * 1.6;
+                    canvasCtx.strokeStyle = 'rgba(40, 40, 40, 0.9)'; // 內軌
+                    canvasCtx.stroke();
 
-                // 數字 ID (裝飾)
-                canvasCtx.fillStyle = 'white';
-                canvasCtx.font = '30px Arial';
-                canvasCtx.textAlign = 'center';
-                canvasCtx.textBaseline = 'middle';
-                canvasCtx.fillText("1", obj.x, obj.y);
-
-                // Hit 判定邏輯
-                // 條件：Pinch 觸發 (剛按下) 且 游標在圈內 且 時間在判定區間內
-                if (isPinching && !prevPinch) { // Trigger on press down
-                    // 計算游標與圓心距離
-                    let dist = Math.sqrt(Math.pow(cursorX - obj.x, 2) + Math.pow(cursorY - obj.y, 2));
+                    // 計算球體位置
+                    let slideProgress = 0;
+                    if (now > obj.hitTime) {
+                        slideProgress = (now - obj.hitTime) / obj.duration;
+                        if (slideProgress > 1) slideProgress = 1;
+                    }
                     
-                    if (dist < CIRCLE_SIZE) {
-                        // 判定時間準度 (簡單版：只要圈圈夠小就可以)
-                        let timeDiff = Math.abs(now - obj.hitTime);
-                        if (timeDiff < 300) { // 300ms 寬容度
-                            // Hit!
-                            playHitSound();
-                            score += 300;
-                            combo++;
-                            scoreEl.innerText = score;
-                            comboEl.innerText = combo + "x";
-                            
-                            // 視覺特效 (簡單一閃)
-                            canvasCtx.beginPath();
-                            canvasCtx.arc(obj.x, obj.y, CIRCLE_SIZE * 1.2, 0, 2 * Math.PI);
-                            canvasCtx.strokeStyle = '#ffcc00';
-                            canvasCtx.stroke();
+                    let ballX = obj.x + (obj.endX - obj.x) * slideProgress;
+                    let ballY = obj.y + (obj.endY - obj.y) * slideProgress;
 
-                            hitObjects.splice(i, 1); // 移除
+                    // 繪製球體
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(ballX, ballY, CIRCLE_SIZE * 0.9, 0, 2 * Math.PI);
+                    // 根據是否正在追蹤變色
+                    if (obj.sliding) {
+                         // 檢查是否跟丟 (必須捏合且距離夠近)
+                         let dist = Math.sqrt(Math.pow(cursorX - ballX, 2) + Math.pow(cursorY - ballY, 2));
+                         if (isPinching && dist < CIRCLE_SIZE * 1.5) {
+                             canvasCtx.fillStyle = '#ffcc00'; // 追蹤中 (黃色)
+                             score += 1; // 持續得分
+                             scoreEl.innerText = score;
+                         } else {
+                             canvasCtx.fillStyle = '#ff0000'; // 跟丟 (紅色)
+                             // 嚴格模式可以在這裡斷 Combo
+                         }
+                    } else {
+                        canvasCtx.fillStyle = 'rgba(255, 102, 170, 0.9)';
+                    }
+                    canvasCtx.fill();
+                    canvasCtx.strokeStyle = 'white';
+                    canvasCtx.lineWidth = 3;
+                    canvasCtx.stroke();
+
+                    // 繪製縮圈 (只在頭部被擊中前顯示)
+                    if (now < obj.hitTime) {
+                        drawApproachCircle(obj.x, obj.y, approachRadius);
+                    }
+
+                } else {
+                    // Circle
+                    drawHitCircle(obj.x, obj.y);
+                    drawApproachCircle(obj.x, obj.y, approachRadius);
+                }
+
+                // === 判定邏輯 (Logic) ===
+
+                // 1. Miss 判定
+                // Circle: 時間過太久
+                // Slider: 時間超過結束時間
+                let endTime = obj.type === 'slider' ? obj.endTime : (obj.hitTime + 200);
+                if (now > endTime && !obj.hit) {
+                    // Slider 特例: 如果有開始滑，算完成一半? 這裡簡化為只要結束時沒做完就移除
+                    handleMiss(i);
+                    continue;
+                }
+                
+                // 2. Hit 判定 (針對 Head)
+                // 必須是「剛按下」(isPinching && !prevPinch)
+                if (isPinching && !prevPinch && !obj.hit && !obj.miss) {
+                    let dist = Math.sqrt(Math.pow(cursorX - obj.x, 2) + Math.pow(cursorY - obj.y, 2));
+                    if (dist < CIRCLE_SIZE) {
+                        let timeDiff = Math.abs(now - obj.hitTime);
+                        if (timeDiff < 300) {
+                            // Hit Head!
+                            playSound('hit');
+                            if (obj.type === 'circle') {
+                                score += 300;
+                                addCombo();
+                                hitObjects.splice(i, 1); // 圓圈打完直接移除
+                            } else {
+                                // Slider Start
+                                obj.hit = true; // 標記頭部已擊中
+                                obj.sliding = true; // 開始滑行
+                                addCombo();
+                            }
                             continue;
                         }
                     }
+                }
+
+                // 3. Slider 完成判定
+                if (obj.type === 'slider' && now >= obj.endTime) {
+                    // 時間到，移除
+                    playSound('hit'); // 尾部音效
+                    score += 100; // 尾部得分
+                    hitObjects.splice(i, 1);
                 }
             }
             prevPinch = isPinching;
         }
 
+        function drawHitCircle(x, y) {
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, CIRCLE_SIZE, 0, 2 * Math.PI);
+            canvasCtx.fillStyle = 'rgba(255, 102, 170, 0.8)';
+            canvasCtx.fill();
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = '#fff';
+            canvasCtx.stroke();
+        }
+
+        function drawApproachCircle(x, y, r) {
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, r, 0, 2 * Math.PI);
+            canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            canvasCtx.lineWidth = 2;
+            canvasCtx.stroke();
+        }
+
         function drawCursor() {
             canvasCtx.beginPath();
             canvasCtx.arc(cursorX, cursorY, 15, 0, 2 * Math.PI);
-            canvasCtx.fillStyle = isPinching ? '#ffff00' : '#00ffff'; // 捏合變黃色，平常青色
+            canvasCtx.fillStyle = isPinching ? '#ffff00' : '#00ffff'; 
             canvasCtx.fill();
             canvasCtx.strokeStyle = '#fff';
             canvasCtx.lineWidth = 2;
             canvasCtx.stroke();
-            
-            // 拖尾效果 (Visual Trail - Optional for simplicity omitted)
         }
 
+        function addCombo() {
+            combo++;
+            comboEl.innerText = combo + "x";
+            // 簡單動畫
+            comboEl.style.transform = "scale(1.5)";
+            setTimeout(() => comboEl.style.transform = "scale(1)", 100);
+        }
 
-        // --- 5. 初始化與啟動 ---
-        
-        // 啟動相機
+        function handleMiss(index) {
+            combo = 0;
+            comboEl.innerText = "0x";
+            comboEl.style.color = "red";
+            setTimeout(() => comboEl.style.color = "#6cc", 200);
+            hitObjects.splice(index, 1);
+        }
+
+        // --- 初始化相機 ---
         const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await hands.send({image: videoElement});
-            },
-            width: 1280,
-            height: 720,
-            facingMode: 'user' // 自拍鏡頭
+            onFrame: async () => await hands.send({image: videoElement}),
+            width: 1280, height: 720, facingMode: 'user'
         });
 
-        // 監聽載入完成
-        // MediaPipe 沒有明確的 "Model Loaded" event，我們透過第一次 successful inference 或簡單的 timeout 判斷
-        // 這裡做一個簡單的機制：當畫面上有東西跑時，或者等待幾秒後顯示開始按鈕
-        
         statusText.innerText = "正在初始化相機與模型...";
-        
-        camera.start()
-            .then(() => {
-                console.log("Camera started");
-                // 假設相機啟動後，模型很快就好。顯示按鈕。
-                spinner.style.display = 'none';
-                statusText.innerText = "準備就緒！\n請確保環境光線充足";
-                startBtn.style.display = 'block';
-            })
-            .catch(err => {
-                console.error(err);
-                statusText.innerText = "無法啟動相機。\n請確認權限或使用 HTTPS。";
-                spinner.style.display = 'none';
-            });
+        camera.start().then(() => {
+            spinner.style.display = 'none';
+            statusText.innerText = "準備就緒！\n請確保環境光線充足";
+            startBtn.style.display = 'block';
+        }).catch(err => {
+            statusText.innerText = "錯誤：需使用 HTTPS 或允許相機權限";
+        });
 
         startBtn.addEventListener('click', () => {
-            // 進入全螢幕 (如果支援)
-            if (document.documentElement.requestFullscreen) {
-                document.documentElement.requestFullscreen().catch(e => console.log(e));
-            }
-            
+            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
             loadingScreen.style.display = 'none';
             isGameRunning = true;
-            score = 0;
-            combo = 0;
-            scoreEl.innerText = "0";
-            comboEl.innerText = "0x";
-            
-            // 啟動音效 Context (因為瀏覽器需要 user interaction)
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-
+            if (audioCtx.state === 'suspended') audioCtx.resume();
             gameLoop();
         });
-
     </script>
 </body>
 </html>
