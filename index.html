@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Hand-osu! (Music Edition)</title>
+    <title>AI Hand-osu! (Easy Rhythm)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -27,14 +27,10 @@
             z-index: 1;
         }
 
-        /* 背景律動層 */
         #beat-layer {
             position: absolute; left: 0; top: 0; width: 100%; height: 100%;
             background: radial-gradient(circle, rgba(255,102,170,0.1) 0%, rgba(0,0,0,0) 70%);
-            opacity: 0;
-            z-index: 0;
-            pointer-events: none;
-            transition: opacity 0.05s;
+            opacity: 0; z-index: 0; pointer-events: none; transition: opacity 0.05s;
         }
 
         #ui-layer {
@@ -57,27 +53,14 @@
             z-index: 20; pointer-events: auto; color: white; text-align: center;
         }
 
-        /* 音樂選擇區塊 */
         .music-selector {
-            margin: 20px 0;
-            padding: 15px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            text-align: center;
+            margin: 20px 0; padding: 15px;
+            background: rgba(255, 255, 255, 0.1); border-radius: 10px; text-align: center;
         }
-        
-        input[type="file"] {
-            display: none;
-        }
-        
+        input[type="file"] { display: none; }
         .custom-file-upload {
-            border: 1px solid #ccc;
-            display: inline-block;
-            padding: 6px 12px;
-            cursor: pointer;
-            border-radius: 5px;
-            background: #333;
-            transition: background 0.3s;
+            border: 1px solid #ccc; display: inline-block; padding: 6px 12px;
+            cursor: pointer; border-radius: 5px; background: #333; transition: background 0.3s;
         }
         .custom-file-upload:hover { background: #555; }
 
@@ -106,48 +89,37 @@
 
     <div id="container">
         <video class="input_video" playsinline></video>
-        <div id="beat-layer"></div> <canvas class="output_canvas"></canvas>
+        <div id="beat-layer"></div>
+        <canvas class="output_canvas"></canvas>
         
         <div id="ui-layer">
             <div id="score-board">
                 Score: <span id="score-val">0</span><br>
                 <span id="combo">0x</span>
             </div>
-            <div id="gesture-hint">食指移動 • 拇指捏合打擊 • 滑條需按住</div>
+            <div id="gesture-hint">食指移動 • 拇指捏合打擊 • 節奏已放慢</div>
         </div>
 
         <div id="loading-screen">
             <div class="spinner" id="spinner"></div>
             <h2 id="status-text">載入 AI 模型中...<br>(首次需連網)</h2>
-            
             <div class="music-selector" id="music-area" style="display:none;">
                 <p>🎵 選擇背景音樂 (選填)</p>
-                <label for="music-upload" class="custom-file-upload">
-                    📂 選擇 MP3 檔案
-                </label>
+                <label for="music-upload" class="custom-file-upload">📂 選擇 MP3 檔案</label>
                 <input id="music-upload" type="file" accept="audio/*"/>
                 <div id="music-name" style="margin-top:10px; font-size: 14px; color: #aaa;">使用預設示範曲</div>
             </div>
-
             <button id="start-btn">開始遊戲</button>
             <p style="font-size: 12px; margin-top: 10px; color: #aaa;">請允許相機權限</p>
         </div>
     </div>
 
     <script>
-        // --- 1. Service Worker & Caching (含 Demo Music) ---
-        // 預設示範曲 (Pixabay 免費素材)
+        // --- 1. Service Worker & Caching ---
         const DEMO_MUSIC_URL = 'https://cdn.pixabay.com/audio/2022/01/18/audio_d29094050b.mp3'; 
-        
         const swCode = `
-            const CACHE_NAME = 'ai-osu-music-v3';
-            const ASSETS = [
-                './', 'index.html',
-                '${DEMO_MUSIC_URL}' // 快取音樂
-            ];
-            self.addEventListener('install', (e) => { 
-                e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS))); 
-            });
+            const CACHE_NAME = 'ai-osu-cache-v4-steady';
+            self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(['./', 'index.html', '${DEMO_MUSIC_URL}']))); });
             self.addEventListener('fetch', (e) => {
                 e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request).then((res) => {
                     if(e.request.url.includes('mediapipe') || e.request.url.includes('gstatic')) {
@@ -162,13 +134,11 @@
             navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(console.error);
         }
 
-        // --- 2. 變數與設置 ---
+        // --- 2. 變數 ---
         const videoElement = document.getElementsByClassName('input_video')[0];
         const canvasElement = document.getElementsByClassName('output_canvas')[0];
         const canvasCtx = canvasElement.getContext('2d');
         const beatLayer = document.getElementById('beat-layer');
-        
-        // UI
         const loadingScreen = document.getElementById('loading-screen');
         const startBtn = document.getElementById('start-btn');
         const statusText = document.getElementById('status-text');
@@ -179,48 +149,46 @@
         const scoreEl = document.getElementById('score-val');
         const comboEl = document.getElementById('combo');
 
-        // Game State
         let isGameRunning = false;
         let score = 0;
         let combo = 0;
         let cursorX = 0, cursorY = 0;
         let isPinching = false, prevPinch = false;
         let hitObjects = [];
-        const AR = 1500; // Approach Rate
-        const CIRCLE_SIZE = 50;
+        
+        // --- 調整難度參數 ---
+        const AR = 1800; // 縮圈時間：越長越慢 (1.8秒)
+        const SPAWN_INTERVAL = 1200; // 最小生成間隔 (1.2秒)
+        const MAX_OBJECTS = 2; // 畫面上同時存在的最大物件數
+        let lastSpawnTime = 0;
 
-        // --- 3. 音頻系統 (BGM & SFX) ---
+        const CIRCLE_SIZE = 55; // 稍微加大圈圈
+
+        // --- 3. 音頻 ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        let bgmSource = null;
-        let bgmBuffer = null;
+        let bgmSource = null, bgmBuffer = null;
         let analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-        // 載入預設音樂
         async function loadDefaultMusic() {
             try {
                 const response = await fetch(DEMO_MUSIC_URL);
                 const arrayBuffer = await response.arrayBuffer();
                 bgmBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-                console.log("預設音樂載入完成");
-            } catch (e) {
-                console.log("預設音樂載入失敗 (可能離線且未快取)", e);
-            }
+            } catch (e) { console.log("Load failed", e); }
         }
         loadDefaultMusic();
 
-        // 處理使用者上傳
         musicUpload.addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
             musicName.innerText = "已選擇: " + file.name;
-            
             const reader = new FileReader();
             reader.onload = function(ev) {
                 audioCtx.decodeAudioData(ev.target.result, function(buffer) {
                     bgmBuffer = buffer;
-                    statusText.innerText = "音樂解析完成！可以開始";
+                    statusText.innerText = "音樂解析完成！";
                 });
             };
             reader.readAsArrayBuffer(file);
@@ -231,38 +199,31 @@
             if (bgmSource) bgmSource.stop();
             bgmSource = audioCtx.createBufferSource();
             bgmSource.buffer = bgmBuffer;
-            bgmSource.loop = true; // 循環播放
-            bgmSource.connect(analyser); // 連接到分析器
-            analyser.connect(audioCtx.destination); // 連接到喇叭
+            bgmSource.loop = true;
+            bgmSource.connect(analyser);
+            analyser.connect(audioCtx.destination);
             bgmSource.start(0);
         }
 
-        // 音效 (SFX)
         function playSfx(type) {
             if(audioCtx.state === 'suspended') audioCtx.resume();
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
-            
             if (type === 'hit') {
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(1000, audioCtx.currentTime);
+                osc.type = 'sine'; osc.frequency.setValueAtTime(1000, audioCtx.currentTime);
                 osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-                gain.gain.setValueAtTime(0.3, audioCtx.currentTime); // 稍微小聲一點以免蓋過音樂
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
             } else if (type === 'combo_break') {
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, audioCtx.currentTime);
                 osc.frequency.linearRampToValueAtTime(50, audioCtx.currentTime + 0.3);
                 gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
             }
-
             gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.1);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
         }
 
-        // --- 4. MediaPipe Setup ---
+        // --- 4. MediaPipe ---
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
         hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onResults);
@@ -278,6 +239,7 @@
                 spawnTime: Date.now(), hitTime: Date.now() + AR,
                 hit: false, miss: false
             });
+            lastSpawnTime = Date.now();
         }
 
         function spawnSlider() {
@@ -297,28 +259,32 @@
                 duration: 1000, endTime: Date.now() + AR + 1000,
                 sliding: false, hit: false, miss: false
             });
+            lastSpawnTime = Date.now();
         }
 
         function gameLoop() {
             if (!isGameRunning) return;
 
-            // 根據音樂分析控制生成率 (簡單版：隨機)
-            // 進階：如果 bass 很大聲，生成機率提高
+            const now = Date.now();
             analyser.getByteFrequencyData(dataArray);
-            let bass = dataArray[0] + dataArray[1] + dataArray[2]; // 取低頻
+            let bass = dataArray[0] + dataArray[1] + dataArray[2]; 
             
-            // 視覺化：背景閃爍
-            if (bass > 300) { // 閾值
-                 beatLayer.style.opacity = (bass / 765) * 0.8; // 0-255 * 3
-            } else {
-                 beatLayer.style.opacity = 0;
-            }
+            // 背景特效
+            if (bass > 300) beatLayer.style.opacity = (bass / 765) * 0.8;
+            else beatLayer.style.opacity = 0;
 
-            // 生成物件 (機率隨 Bass 增加)
-            let spawnChance = 0.02 + (bass / 10000); 
-            if (Math.random() < spawnChance && hitObjects.length < 5) {
-                if (Math.random() < 0.4) spawnSlider();
-                else spawnCircle();
+            // --- 穩定生成邏輯 ---
+            // 1. 檢查數量限制
+            // 2. 檢查冷卻時間 (SPAWM_INTERVAL)
+            // 3. 節奏觸發 (Bass) 或 隨機補位
+            if (hitObjects.length < MAX_OBJECTS && (now - lastSpawnTime > SPAWN_INTERVAL)) {
+                // 如果音樂重低音強，或者單純時間到了隨機產生
+                let shouldSpawn = (bass > 400) || (Math.random() < 0.05);
+                
+                if (shouldSpawn) {
+                    if (Math.random() < 0.3) spawnSlider(); // 30% 機率滑條
+                    else spawnCircle();
+                }
             }
 
             requestAnimationFrame(gameLoop);
@@ -331,10 +297,9 @@
 
             canvasCtx.save();
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.6)'; // 變暗一點以凸顯特效
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
-            // 手勢追蹤
             let handDetected = false;
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 handDetected = true;
@@ -360,21 +325,15 @@
                 let approachRadius = CIRCLE_SIZE + (CIRCLE_SIZE * 3 * (1 - progress));
                 if (approachRadius < CIRCLE_SIZE) approachRadius = CIRCLE_SIZE;
 
-                // --- 繪製 ---
                 if (obj.type === 'slider') {
-                    // 軌道
                     canvasCtx.beginPath();
                     canvasCtx.moveTo(obj.x, obj.y);
                     canvasCtx.lineTo(obj.endX, obj.endY);
-                    canvasCtx.lineWidth = CIRCLE_SIZE * 1.8;
-                    canvasCtx.lineCap = 'round';
-                    canvasCtx.strokeStyle = 'rgba(80, 80, 80, 0.8)';
-                    canvasCtx.stroke();
+                    canvasCtx.lineWidth = CIRCLE_SIZE * 1.8; canvasCtx.lineCap = 'round';
+                    canvasCtx.strokeStyle = 'rgba(80, 80, 80, 0.8)'; canvasCtx.stroke();
                     canvasCtx.lineWidth = CIRCLE_SIZE * 1.6;
-                    canvasCtx.strokeStyle = 'rgba(30, 30, 30, 0.9)';
-                    canvasCtx.stroke();
+                    canvasCtx.strokeStyle = 'rgba(30, 30, 30, 0.9)'; canvasCtx.stroke();
 
-                    // 球體
                     let slideProgress = 0;
                     if (now > obj.hitTime) {
                         slideProgress = (now - obj.hitTime) / obj.duration;
@@ -383,31 +342,22 @@
                     let bx = obj.x + (obj.endX - obj.x) * slideProgress;
                     let by = obj.y + (obj.endY - obj.y) * slideProgress;
 
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(bx, by, CIRCLE_SIZE * 0.9, 0, 2 * Math.PI);
-                    
+                    canvasCtx.beginPath(); canvasCtx.arc(bx, by, CIRCLE_SIZE * 0.9, 0, 2 * Math.PI);
                     if (obj.sliding) {
                          let dist = Math.sqrt(Math.pow(cursorX - bx, 2) + Math.pow(cursorY - by, 2));
                          if (isPinching && dist < CIRCLE_SIZE * 1.5) {
-                             canvasCtx.fillStyle = '#ffcc00'; // 追蹤成功
-                             score += 1; scoreEl.innerText = score;
-                         } else {
-                             canvasCtx.fillStyle = '#ff0000'; // 脫軌
-                         }
-                    } else {
-                        canvasCtx.fillStyle = 'rgba(255, 102, 170, 0.9)';
-                    }
-                    canvasCtx.fill();
-                    canvasCtx.strokeStyle = 'white'; canvasCtx.lineWidth = 3; canvasCtx.stroke();
+                             canvasCtx.fillStyle = '#ffcc00'; score += 1; scoreEl.innerText = score;
+                         } else { canvasCtx.fillStyle = '#ff0000'; }
+                    } else { canvasCtx.fillStyle = 'rgba(255, 102, 170, 0.9)'; }
+                    canvasCtx.fill(); canvasCtx.strokeStyle = 'white'; canvasCtx.lineWidth = 3; canvasCtx.stroke();
                     if (now < obj.hitTime) drawApproachCircle(obj.x, obj.y, approachRadius);
 
-                } else { // Circle
+                } else {
                     drawHitCircle(obj.x, obj.y);
                     drawApproachCircle(obj.x, obj.y, approachRadius);
                 }
 
-                // --- 判定 ---
-                let endTime = obj.type === 'slider' ? obj.endTime : (obj.hitTime + 200);
+                let endTime = obj.type === 'slider' ? obj.endTime : (obj.hitTime + 300); // 寬容度增加到 300ms
                 if (now > endTime && !obj.hit) {
                     playSfx('combo_break');
                     combo = 0; comboEl.innerText = "0x"; comboEl.style.color = "red";
@@ -418,7 +368,8 @@
                 if (isPinching && !prevPinch && !obj.hit && !obj.miss) {
                     let dist = Math.sqrt(Math.pow(cursorX - obj.x, 2) + Math.pow(cursorY - obj.y, 2));
                     if (dist < CIRCLE_SIZE) {
-                        if (Math.abs(now - obj.hitTime) < 300) {
+                        // 判定時間放寬
+                        if (Math.abs(now - obj.hitTime) < 400) {
                             playSfx('hit');
                             if (obj.type === 'circle') {
                                 score += 300; addCombo(); hitObjects.splice(i, 1);
@@ -455,7 +406,6 @@
             comboEl.style.transform = "scale(1.5)"; setTimeout(() => comboEl.style.transform = "scale(1)", 100);
         }
 
-        // --- Init ---
         const camera = new Camera(videoElement, {
             onFrame: async () => await hands.send({image: videoElement}),
             width: 1280, height: 720, facingMode: 'user'
@@ -463,25 +413,15 @@
 
         statusText.innerText = "初始化相機...";
         camera.start().then(() => {
-            spinner.style.display = 'none';
-            statusText.innerText = "準備就緒！";
-            musicArea.style.display = 'block'; // 顯示音樂選擇
-            startBtn.style.display = 'inline-block';
-        }).catch(err => {
-            statusText.innerText = "請允許相機權限或使用 HTTPS";
-            console.error(err);
-        });
+            spinner.style.display = 'none'; statusText.innerText = "準備就緒！";
+            musicArea.style.display = 'block'; startBtn.style.display = 'inline-block';
+        }).catch(err => { statusText.innerText = "請允許相機權限或使用 HTTPS"; });
 
         startBtn.addEventListener('click', () => {
             if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
-            
-            // 啟動音訊環境 (必須在 user gesture 內)
             if (audioCtx.state === 'suspended') audioCtx.resume();
-            
-            loadingScreen.style.display = 'none';
-            isGameRunning = true;
-            playBGM(); // 播放音樂
-            gameLoop();
+            loadingScreen.style.display = 'none'; isGameRunning = true;
+            playBGM(); gameLoop();
         });
     </script>
 </body>
