@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JS Raycasting Engine - CS Intro Project</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            color: #eee;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+            border: 2px solid #444;
+        }
+
+        canvas {
+            display: block;
+            background-color: #000;
+        }
+
+        .controls {
+            margin-top: 15px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        
+        .key {
+            display: inline-block;
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            color: white;
+            margin: 0 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="screen" width="640" height="480"></canvas>
+    </div>
+
+    <div class="controls">
+        <p>控制方式: <span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> 或 <span class="key">↑</span> <span class="key">↓</span> <span class="key">←</span> <span class="key">→</span> 移動</p>
+        <p>報告亮點：觀察左上角小地圖與 3D 畫面的對應關係</p>
+    </div>
+
+<script>
+/**
+ * 核心變數設定
+ * 為了像 C 語言一樣好讀，盡量不使用太複雜的 JS 語法糖
+ */
+const CANVAS_WIDTH = 640;
+const CANVAS_HEIGHT = 480;
+const TICK_RATE = 30; // 每秒 30 幀 (FPS)
+const FOV = Math.PI / 3; // 視野角度 (60度)
+const BLOCK_SIZE = 64;   // 地圖上一格的大小
+const MAP_SIZE = 16;     // 地圖寬高 (16x16)
+const SPEED = 4;         // 移動速度
+const ROT_SPEED = 0.08;  // 旋轉速度
+
+// 地圖陣列 (1=牆壁, 0=空地)
+// 你可以修改這裡的 1 來改變迷宮形狀
+const map = [
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1],
+    [1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+    [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+    [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+];
+
+// 玩家初始狀態
+const player = {
+    x: CANVAS_WIDTH / 2,
+    y: CANVAS_HEIGHT / 2,
+    dir: 0, // 面向角度 (弧度)
+    rot: 0, // 旋轉狀態
+    speed: 0, // 移動狀態 (前進/後退)
+    moveDir: 0 // 側移狀態 (左右)
+};
+
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+
+// 按鍵狀態追蹤
+const keys = {};
+
+// 初始化
+function init() {
+    bindInput();
+    // 遊戲迴圈
+    setInterval(gameLoop, 1000 / TICK_RATE);
+}
+
+// 綁定鍵盤事件
+function bindInput() {
+    document.addEventListener('keydown', (e) => {
+        keys[e.code] = true;
+    });
+    document.addEventListener('keyup', (e) => {
+        keys[e.code] = false;
+    });
+}
+
+// 物理與邏輯更新
+function update() {
+    // 處理旋轉
+    if (keys['ArrowLeft'] || keys['KeyA']) player.dir -= ROT_SPEED;
+    if (keys['ArrowRight'] || keys['KeyD']) player.dir += ROT_SPEED;
+
+    // 處理移動
+    let moveStep = 0;
+    if (keys['ArrowUp'] || keys['KeyW']) moveStep = SPEED;
+    if (keys['ArrowDown'] || keys['KeyS']) moveStep = -SPEED;
+
+    // 計算新的 X, Y 位置 (三角函數應用)
+    // newX = currentX + cos(angle) * distance
+    let newX = player.x + Math.cos(player.dir) * moveStep;
+    let newY = player.y + Math.sin(player.dir) * moveStep;
+
+    // 簡單的碰撞檢測 (Collision Detection)
+    // 檢查新位置在地圖陣列中是否為牆壁 (1)
+    if (!isWall(newX, newY)) {
+        player.x = newX;
+        player.y = newY;
+    }
+}
+
+// 檢查座標是否在牆壁內
+function isWall(x, y) {
+    // 將像素座標轉換為網格座標
+    let mapX = Math.floor(x / BLOCK_SIZE);
+    let mapY = Math.floor(y / BLOCK_SIZE);
+    
+    // 邊界檢查
+    if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) return true;
+    return map[mapY][mapX] === 1;
+}
+
+// 繪圖主程式
+function draw() {
+    // 1. 清空畫面並繪製地板與天花板
+    ctx.fillStyle = "#333"; // 天花板顏色
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT / 2);
+    ctx.fillStyle = "#555"; // 地板顏色
+    ctx.fillRect(0, CANVAS_HEIGHT / 2, CANVAS_WIDTH, CANVAS_HEIGHT / 2);
+
+    // 2. 核心：Raycasting (光線投射演算法)
+    // 我們要從螢幕最左邊掃到最右邊，每一列像素發射一條射線
+    for (let i = 0; i < CANVAS_WIDTH; i++) {
+        
+        // 計算這條射線的角度
+        // 角度範圍從 (玩家角度 - FOV/2) 到 (玩家角度 + FOV/2)
+        let rayAngle = (player.dir - FOV / 2.0) + (i / CANVAS_WIDTH) * FOV;
+        
+        let dist = 0;      // 射線長度
+        let hitWall = false;
+
+        // 簡單的步進演算法 (Ray Marching)
+        // 每次前進一點點，直到撞到牆壁
+        // (進階可以用 DDA 演算法優化，但為了程式碼易讀性，這裡用簡單版)
+        let eyeX = Math.cos(rayAngle);
+        let eyeY = Math.sin(rayAngle);
+
+        let testX = player.x;
+        let testY = player.y;
+
+        // 最大視距 
+        while (!hitWall && dist < 800) {
+            dist += 1; // 每次前進 1 單位 (精確度可調)
+            testX = player.x + eyeX * dist;
+            testY = player.y + eyeY * dist;
+
+            if (isWall(testX, testY)) {
+                hitWall = true;
+            }
+        }
+
+        // 3. 魚眼效應修正 (Fish-Eye Correction)
+        // 如果不修正，牆壁看起來會彎曲
+        let correctedDist = dist * Math.cos(rayAngle - player.dir);
+        
+        // 4. 計算牆壁在畫面上的高度
+        // 距離越近，牆壁越高 (反比關係)
+        let wallHeight = (BLOCK_SIZE * 320) / correctedDist;
+
+        // 5. 繪製牆壁線條
+        // 根據距離調整顏色亮度 (模擬迷霧/陰影)
+        let brightness = Math.max(50, 255 - dist / 2); 
+        ctx.fillStyle = `rgb(0, ${brightness}, ${brightness * 0.5})`; // 綠色調的牆
+        
+        // 畫出一條垂直線
+        ctx.fillRect(i, (CANVAS_HEIGHT / 2) - (wallHeight / 2), 1, wallHeight);
+    }
+
+    // 6. 繪製左上角 2D 小地圖 (Minimap)
+    drawMinimap();
+}
+
+function drawMinimap() {
+    const scale = 0.2; // 縮放比例
+    const mapOffsetX = 10;
+    const mapOffsetY = 10;
+    
+    // 畫背景
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillRect(mapOffsetX, mapOffsetY, MAP_SIZE * BLOCK_SIZE * scale, MAP_SIZE * BLOCK_SIZE * scale);
+
+    // 畫牆壁
+    for (let y = 0; y < MAP_SIZE; y++) {
+        for (let x = 0; x < MAP_SIZE; x++) {
+            if (map[y][x] === 1) {
+                ctx.fillStyle = "#fff";
+                ctx.fillRect(
+                    mapOffsetX + x * BLOCK_SIZE * scale, 
+                    mapOffsetY + y * BLOCK_SIZE * scale, 
+                    BLOCK_SIZE * scale, 
+                    BLOCK_SIZE * scale
+                );
+            }
+        }
+    }
+
+    // 畫玩家
+    ctx.fillStyle = "red";
+    let pX = mapOffsetX + player.x * scale;
+    let pY = mapOffsetY + player.y * scale;
+    ctx.beginPath();
+    ctx.arc(pX, pY, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 畫視野方向線
+    ctx.strokeStyle = "yellow";
+    ctx.beginPath();
+    ctx.moveTo(pX, pY);
+    ctx.lineTo(pX + Math.cos(player.dir) * 20, pY + Math.sin(player.dir) * 20);
+    ctx.stroke();
+}
+
+function gameLoop() {
+    update();
+    draw();
+}
+
+// 啟動遊戲
+init();
+
+</script>
+</body>
+</html>
